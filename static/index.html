@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Language Detector</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #3b82f6;
+      --accent-dim: #2563eb;
+      --text: #e7ecf3;
+      --muted: #94a3b8;
+      --success: #22c55e;
+      --warn: #f59e0b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #1e293b 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-top: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 1.5rem;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 720px) {
+      .grid { grid-template-columns: 1.2fr 0.8fr; }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 16px;
+      padding: 1.25rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+    }
+
+    .video-wrap {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+      aspect-ratio: 4 / 3;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    .letter-display {
+      font-size: 5rem;
+      font-weight: 800;
+      text-align: center;
+      line-height: 1;
+      min-height: 5.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
+
+    .status {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 0.75rem;
+    }
+
+    .status.ok { color: var(--success); }
+    .status.warn { color: var(--warn); }
+
+    .sentence {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: rgba(15, 20, 25, 0.6);
+      border-radius: 10px;
+      min-height: 3rem;
+      font-size: 1.25rem;
+      word-break: break-word;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    button {
+      flex: 1;
+      min-width: 100px;
+      padding: 0.65rem 1rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: white;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: var(--accent-dim); }
+    button.secondary {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .banner {
+      margin-bottom: 1.5rem;
+      padding: 1rem;
+      border-radius: 10px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fcd34d;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .banner.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Sign Language Detector</h1>
+      <p class="subtitle">Show ASL hand signs to your webcam — letters A through Z</p>
+    </header>
+
+    <div id="model-banner" class="banner">
+      Model not loaded on the server. Train locally with option 1, then commit
+      <code>sign_model_26letters.pkl</code> and redeploy.
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="video-wrap">
+          <video id="webcam" autoplay playsinline muted></video>
+        </div>
+        <p id="camera-status" class="status">Starting camera…</p>
+      </section>
+
+      <section class="card">
+        <div class="letter-display" id="letter">—</div>
+        <p id="detect-status" class="status">Waiting for hand…</p>
+
+        <div class="sentence" id="sentence"></div>
+
+        <div class="controls">
+          <button type="button" id="add-letter" disabled>Add letter</button>
+          <button type="button" class="secondary" id="add-space">Space</button>
+          <button type="button" class="secondary" id="clear">Clear</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById("webcam");
+    const letterEl = document.getElementById("letter");
+    const sentenceEl = document.getElementById("sentence");
+    const detectStatus = document.getElementById("detect-status");
+    const cameraStatus = document.getElementById("camera-status");
+    const addBtn = document.getElementById("add-letter");
+    const banner = document.getElementById("model-banner");
+
+    let currentLetter = null;
+    let modelReady = false;
+    let busy = false;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    async function checkHealth() {
+      const res = await fetch("/health");
+      const data = await res.json();
+      modelReady = data.model_loaded;
+      if (!modelReady) banner.classList.add("visible");
+    }
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        });
+        video.srcObject = stream;
+        await video.play();
+        cameraStatus.textContent = "Camera active";
+        cameraStatus.classList.add("ok");
+        loop();
+      } catch (err) {
+        cameraStatus.textContent = "Camera access denied: " + err.message;
+        cameraStatus.classList.add("warn");
+      }
+    }
+
+    async function predictFrame() {
+      if (!modelReady || busy || video.readyState < 2) return;
+
+      busy = true;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+      try {
+        const res = await fetch("/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataUrl }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          detectStatus.textContent = err.detail || "Prediction failed";
+          detectStatus.classList.add("warn");
+          busy = false;
+          return;
+        }
+
+        const data = await res.json();
+        if (data.hand_detected && data.letter) {
+          currentLetter = data.letter;
+          letterEl.textContent = data.letter;
+          detectStatus.textContent = "Hand detected";
+          detectStatus.classList.remove("warn");
+          detectStatus.classList.add("ok");
+          addBtn.disabled = false;
+        } else {
+          currentLetter = null;
+          letterEl.textContent = "—";
+          detectStatus.textContent = "Show your hand";
+          detectStatus.classList.remove("ok");
+          addBtn.disabled = true;
+        }
+      } catch (err) {
+        detectStatus.textContent = "Network error";
+        detectStatus.classList.add("warn");
+      }
+
+      busy = false;
+    }
+
+    function loop() {
+      predictFrame();
+      setTimeout(loop, 200);
+    }
+
+    document.getElementById("add-letter").addEventListener("click", () => {
+      if (currentLetter) sentenceEl.textContent += currentLetter;
+    });
+
+    document.getElementById("add-space").addEventListener("click", () => {
+      sentenceEl.textContent += " ";
+    });
+
+    document.getElementById("clear").addEventListener("click", () => {
+      sentenceEl.textContent = "";
+    });
+
+    checkHealth().then(startCamera);
+  </script>
+</body>
+</html>
