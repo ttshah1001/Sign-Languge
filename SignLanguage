@@ -11,9 +11,10 @@ def main():
 
     print("Sign Language Detection - All 26 Letters")
     print("Uses MediaPipe + Random Forest (No TensorFlow needed)")
-    print("\n1. Collect training data")
+    print("\n1. Collect training data (webcam)")
     print("2. Load model and start detection")
     print("3. Quick test with sample data")
+    print("4. Train from images: python train_from_images.py")
 
     choice = input("\nEnter choice (1/2/3): ")
 
