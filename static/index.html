@@ -232,14 +232,35 @@
       }
     }
 
+    function captureFrame() {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) return null;
+
+      const maxW = 640;
+      const scale = w > maxW ? maxW / w : 1;
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+
+      ctx.save();
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      return canvas.toDataURL("image/jpeg", 0.92);
+    }
+
     async function predictFrame() {
-      if (!modelReady || busy || video.readyState < 2) return;
+      if (busy || video.readyState < 2) return;
+
+      const dataUrl = captureFrame();
+      if (!dataUrl) {
+        detectStatus.textContent = "Starting camera…";
+        return;
+      }
 
       busy = true;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
 
       try {
         const res = await fetch("/predict", {
@@ -250,29 +271,43 @@
 
         if (!res.ok) {
           const err = await res.json();
-          detectStatus.textContent = err.detail || "Prediction failed";
+          const detail = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
+          detectStatus.textContent = detail || "Prediction failed";
           detectStatus.classList.add("warn");
           busy = false;
           return;
         }
 
         const data = await res.json();
-        if (data.hand_detected && data.letter) {
-          currentLetter = data.letter;
-          letterEl.textContent = data.letter;
+        modelReady = data.model_loaded;
+
+        if (!modelReady) {
+          banner.classList.add("visible");
+          detectStatus.textContent = "Model not loaded on server";
+          detectStatus.classList.add("warn");
+        } else if (data.hand_detected) {
           detectStatus.textContent = "Hand detected";
           detectStatus.classList.remove("warn");
           detectStatus.classList.add("ok");
-          addBtn.disabled = false;
+
+          if (data.letter) {
+            currentLetter = data.letter;
+            letterEl.textContent = data.letter;
+            addBtn.disabled = false;
+          } else {
+            currentLetter = null;
+            letterEl.textContent = "—";
+            addBtn.disabled = true;
+          }
         } else {
           currentLetter = null;
           letterEl.textContent = "—";
-          detectStatus.textContent = "Show your hand";
+          detectStatus.textContent = "Show your hand clearly to the camera";
           detectStatus.classList.remove("ok");
           addBtn.disabled = true;
         }
       } catch (err) {
-        detectStatus.textContent = "Network error";
+        detectStatus.textContent = "Network error — check connection";
         detectStatus.classList.add("warn");
       }
 
@@ -281,7 +316,7 @@
 
     function loop() {
       predictFrame();
-      setTimeout(loop, 400);
+      setTimeout(loop, 300);
     }
 
     document.getElementById("add-letter").addEventListener("click", () => {

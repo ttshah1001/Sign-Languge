@@ -1,5 +1,6 @@
 import os
 import pickle
+import threading
 import time
 from collections import Counter
 
@@ -14,11 +15,12 @@ from sklearn.model_selection import train_test_split
 class SignLanguageDetector:
     def __init__(self):
         self.mp_hands = mp.solutions.hands
+        self._hands_lock = threading.Lock()
         self.hands = self.mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+            min_detection_confidence=0.3,
+            min_tracking_confidence=0.3,
         )
         self.mp_drawing = mp.solutions.drawing_utils
 
@@ -57,9 +59,32 @@ class SignLanguageDetector:
         self.prediction_history = []
         self.history_size = 8
 
+    def _prepare_frame(self, image):
+        if image is None or image.size == 0:
+            return None
+
+        frame = image.copy()
+        height, width = frame.shape[:2]
+
+        if width > 960:
+            scale = 960 / width
+            frame = cv2.resize(
+                frame, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA
+            )
+
+        if frame.mean() < 40:
+            frame = cv2.convertScaleAbs(frame, alpha=1.4, beta=30)
+
+        return frame
+
     def extract_hand_landmarks(self, image):
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb_image)
+        frame = self._prepare_frame(image)
+        if frame is None:
+            return None
+
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        with self._hands_lock:
+            results = self.hands.process(rgb_image)
 
         if results.multi_hand_landmarks:
             hand_landmarks = results.multi_hand_landmarks[0]
@@ -85,12 +110,15 @@ class SignLanguageDetector:
 
     def predict_from_image(self, image_bgr):
         landmarks = self.extract_hand_landmarks(image_bgr)
-        if landmarks is None or self.model is None:
-            return None
+        if landmarks is None:
+            return None, False
+        if self.model is None:
+            return None, True
 
         prediction = self.model.predict([landmarks])[0]
         smooth_prediction = self.smooth_predictions(prediction)
-        return self.labels_dict.get(smooth_prediction, "Unknown")
+        letter = self.labels_dict.get(smooth_prediction, "Unknown")
+        return letter, True
 
     def collect_data(self):
         cap = cv2.VideoCapture(0)
